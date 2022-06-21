@@ -1,0 +1,118 @@
+#  Custom pipeline to deploy the process to AWS
+
+image: python:3.8
+
+definitions:
+  services:  # https://support.atlassian.com/bitbucket-cloud/docs/databases-and-service-containers/
+    mysql:
+      image: mysql:8.0
+      entrypoint: [
+        '/entrypoint.sh',
+        '--default-authentication-plugin=mysql_native_password',
+        '--sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION'
+      ]
+      environment:
+        MYSQL_DATABASE: 'database_name'
+        MYSQL_USER: 'user'
+        MYSQL_PASSWORD: 'password'
+        MYSQL_ROOT_PASSWORD: 'root'
+#    mongo:
+#      image: mongo:4.2.19
+#      environment:
+#        MONGO_INITDB_ROOT_USERNAME: "root"
+#        MONGO_INITDB_ROOT_PASSWORD: "example"
+  caches:
+    pre-commit: $HOME/.cache/pre-commit
+    poetry: $HOME/.cache/pypoetry
+  steps:
+    - step: &PreCommit-all-files
+        name: Run pre-commit for all files
+        caches:
+          - pip
+          - pre-commit
+          - poetry
+        script:
+          - pip install poetry==1.1.13
+          - poetry install
+          - poetry run pre-commit run --all-files
+    - step: &unit-test-and-coverage
+        name: Run unit-testing and coverage report
+        caches:
+          - pip
+          - poetry
+        script:
+          - export MYSQL_SERVER='127.0.0.1:3306'
+          - pip install poetry==1.1.13
+          - poetry install
+          - poetry run alembic upgrade head
+          - poetry run coverage run -m pytest runtime/tests
+          - poetry run coverage report --fail-under 30
+          - poetry run coverage xml -i
+        services:
+          - mysql
+        artifacts:
+          - coverage.xml
+    - step: &AWS-SAM-Deploy
+        name: AWS SAM Deploy
+        caches:
+          - pip
+        script:
+          - mkdir dependencies
+          - pip install poetry==1.1.13
+          - poetry export -f requirements.txt -o dependencies/requirements.txt --with-credentials --without-hashes
+          - export STACK_NAME="example-project"
+          - export SAM_S3_PREFIX="example-prefix"
+          - export SAM_TEMPLATE_FILE_NAME="aws_infrastructure.yaml"
+          - export SAM_OVERRIDE="DeployEnvironment=$DEPLOY_ENV"
+          - pip install awscli==1.23.0
+          - pip install aws-sam-cli==1.46.0
+          - aws configure --profile deployment set aws_access_key_id ${AWS_ACCESS_KEY_ID}
+          - aws configure --profile deployment set aws_secret_access_key ${AWS_SECRET_ACCESS_KEY}
+          - sam build --profile deployment --template ${SAM_TEMPLATE_FILE_NAME} --region ${AWS_REGION}
+          - sam package --profile deployment --region ${AWS_REGION} --template-file .aws-sam/build/template.yaml --output-template-file package.yaml --s3-bucket ${SAM_S3_BUCKET} --s3-prefix ${SAM_S3_PREFIX}
+          - sam deploy --profile deployment --region ${AWS_REGION} --template-file package.yaml --stack-name ${STACK_NAME} --capabilities CAPABILITY_IAM --parameter-overrides ${SAM_OVERRIDE}
+
+pipelines:
+  pull-requests:
+    '**':
+      - parallel:
+        - step: *PreCommit-all-files
+        - step: *unit-test-and-coverage
+
+  custom:
+    dev-deploy:
+#      - step:
+#          name: Run DB migration
+#          caches:
+#            - pip
+#            - poetry
+#          script:
+#            - export MYSQL_SERVER=${MYSQL_SERVER}
+#            - export MYSQL_USER=${MYSQL_USER}
+#            - export MYSQL_PASSWORD=${MYSQL_PASSWORD}
+#            - export MYSQL_DB=${MYSQL_DB}
+#            - pip install poetry==1.1.13
+#            - poetry install
+#            - poetry run alembic upgrade head
+      - step:
+          <<: *AWS-SAM-Deploy
+          name: (DEV) AWS SAM Deploy
+          deployment: test
+
+    prod-deploy:
+      - step:
+          <<: *AWS-SAM-Deploy
+          name: (PROD) AWS SAM Deploy
+          deployment: production
+
+    invalidate-deployments-cache:
+      - variables:
+        - name: BITBUCKET_USERNAME
+        - name: BITBUCKET_APP_PASSWORD
+      - step:
+          name: Invalidating deployments pipeline cache
+          script:  # https://bitbucket.org/atlassian/bitbucket-clear-cache/src/master/
+            - pipe: atlassian/bitbucket-clear-cache:3.1.1
+              variables:
+                BITBUCKET_USERNAME: $BITBUCKET_USERNAME
+                BITBUCKET_APP_PASSWORD: $BITBUCKET_APP_PASSWORD

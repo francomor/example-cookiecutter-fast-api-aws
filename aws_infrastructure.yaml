@@ -1,0 +1,102 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Transform: 'AWS::Serverless-2016-10-31'
+Description: An example project using cookiecutter
+
+Parameters:
+  DeployEnvironment:
+    Description: Deploy environment type.
+    Default: dev
+    Type: String
+    AllowedValues: [dev, prod]
+    ConstraintDescription: must specify dev or prod.
+  MysqlServer:
+    Type: AWS::SSM::Parameter::Value<String>
+    Default: 'MysqlServer'
+    Description: From SSM, Mysql server url (localhost:3306)
+
+
+Globals: # https://docs.aws.amazon.com/serverless-application-model/latest/developerguide/sam-specification-template-anatomy-globals.html
+    Function:
+      Environment:
+        Variables:
+          # Powertools env vars: https://awslabs.github.io/aws-lambda-powertools-python/#environment-variables
+          LOG_LEVEL: INFO
+          POWERTOOLS_LOGGER_SAMPLE_RATE: 0.1
+          POWERTOOLS_LOGGER_LOG_EVENT: true
+          POWERTOOLS_METRICS_NAMESPACE: example project
+          POWERTOOLS_SERVICE_NAME: example-project
+          INFRASTRUCTURE_ENVIRONMENT: AWS
+          MYSQL_SERVER: !Ref MysqlServer
+          MYSQL_USER: "user"
+          MYSQL_PASSWORD: "password"
+      Timeout: 29
+      MemorySize: 128
+      Runtime: python3.8
+      EventInvokeConfig:
+        MaximumRetryAttempts: 0
+      Tracing: Active # https://docs.aws.amazon.com/lambda/latest/dg/lambda-x-ray.html
+      # Embed Lambda Powertools as a shared Layer
+      # See: https://awslabs.github.io/aws-lambda-powertools-python/latest/#lambda-layer
+      Layers: #
+          - !Sub arn:aws:lambda:${AWS::Region}:017000801446:layer:AWSLambdaPowertoolsPython:17
+      Tags:
+        Name: example project
+        Environment: !Ref DeployEnvironment
+        BusinessOwner: example@admin.com
+
+Resources:
+  RestAPIGateway:
+    Type: AWS::Serverless::Api
+    Properties:
+      Name: "example-project"
+      Description: 'API rest for An example project using cookiecutter'
+      EndpointConfiguration: REGIONAL
+      StageName: !Sub "${DeployEnvironment}"
+      Cors: # https://awslabs.github.io/aws-lambda-powertools-python/latest/core/event_handler/api_gateway/#cors
+        # AllowOrigin: "'https://example.com'"
+        AllowOrigin: "'*'"  # Dev only
+        AllowHeaders: "'Content-Type,Authorization,X-Amz-Date'"
+        MaxAge: "'300'"
+      TracingEnabled: true
+      BinaryMediaTypes: # https://awslabs.github.io/aws-lambda-powertools-python/latest/core/event_handler/api_gateway/#binary-responses
+        - '*~1*'  # converts to */* for any binary type
+      MethodSettings:
+        - HttpMethod: '*'
+          ResourcePath: '/*'
+          LoggingLevel: ERROR
+          DataTraceEnabled: true
+          MetricsEnabled: true
+          CachingEnabled: false
+
+  lambdaProxyForRestAPI:
+    Type: AWS::Serverless::Function
+    Properties:
+      FunctionName: "example-project"
+      Environment:
+        Variables:
+          DEPLOY_ENV: !Ref DeployEnvironment
+          API_PREFIX: !Sub "/${DeployEnvironment}"
+          PROJECT_NAME: !Sub "example-project-${DeployEnvironment}"
+      CodeUri: runtime/
+      Handler: src.main.handler
+      Layers:
+        - !Ref lambdaProxyForRestAPILayer
+      Events:
+        ApiEvent:
+          Type: Api
+          Properties:
+            Path: /{proxy+}
+            Method: ANY
+            RestApiId: !Ref RestAPIGateway
+
+  lambdaProxyForRestAPILayer:
+    Type: AWS::Serverless::LayerVersion
+    Properties:
+        LayerName: "example-project"
+        Description: Includes all requirements needed for running in Lambda
+        ContentUri: dependencies/  # Created at deployment time
+        CompatibleRuntimes:
+          - python3.8
+        RetentionPolicy: Delete
+    Metadata:
+      BuildMethod: python3.8

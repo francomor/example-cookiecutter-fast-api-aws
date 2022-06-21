@@ -1,0 +1,80 @@
+[tool.poetry]
+name = "runtime"
+version = "0.1.0"
+description = "An example project using cookiecutter"
+authors = []
+license = "MIT"
+
+[build-system]
+requires = ["poetry==1.1.13", "poetry-core>=1.0.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry.scripts]
+create_first_superuser = "runtime.src.initial_data:main"
+fastapi = "runtime.src.local_main:main"
+
+# this section contains all dependencies required to run unit and integration tests
+# not just dependencies requied for lambda runtime
+[tool.poetry.dependencies]
+python = "==3.8.*"
+pydantic = "^1.9.0"
+fastapi = ">=0.53.0"
+mangum = "^0.14.0"
+sqlalchemy = "==1.*,^1.4.10"
+passlib = "1.7.4"
+pyjwt = "2.3.0"
+python-multipart = "^0.0.5"
+email-validator = "^1.1.3"
+PyMySQL = "^1.0.2"
+bcrypt = "^3.2.0"
+cryptography = "^36.0.2"
+requests = "^2.27.1"
+
+[tool.poetry.dev-dependencies]
+uvicorn = "^0.17.3"
+alembic = "^1.3.2"
+cfn-lint = "0.59.0"
+boto3 = "1.21.4"
+aws-lambda-powertools = "^1.24.2"
+constructs = "10.*"
+pytest = "^6.2.5"
+pytest-mock = "^3.5.1"
+pytest-cov = "^3.0.0"
+black = "^22.1.0"
+flake8 = "^4.0.1"
+flake8-black = "^0.2.3"
+flake8-builtins = "^1.5.3"
+flake8-comprehensions = "^3.7.0"
+flake8-debugger = "^4.0.0"
+flake8-fixme = "^1.1.1"
+flake8-isort = "^4.1.1"
+flake8-variables-names = "^0.0.4"
+isort = "^5.10.1"
+pre-commit = "^2.17.0"
+mypy = "^0.931"
+types-setuptools = "^57.4.8"
+types-toml = "^0.10.3"
+boto3-stubs = "1.21.4"
+
+[tool.isort]
+profile = "black"
+line_length = 120
+src_paths = ["runtime"]
+skip = "db_migrations,.venv"
+
+[tool.black]
+line-length = 120
+
+[tool.pytest.ini_options]
+minversion = "6.0"
+# addopts = "--cov=runtime --cov-report html --cov-report xml"
+testpaths = [
+    "runtime/tests",
+]
+
+[tool.coverage.run]
+source = ["runtime/src"]
+omit = ["runtime/tests/*", "db_migrations/*"]
+
+[tool.coverage.html]
+directory = "test_report"
